@@ -54,6 +54,10 @@ const LOG_PATH = join(APP_DIR, "proxy.log");
 const UI_PID_PATH = join(APP_DIR, "ui.pid");
 const UI_LOG_PATH = join(APP_DIR, "ui.log");
 const ROUTING_PATH = join(APP_DIR, "routing.json");
+const PROVIDER_PATH = join(APP_DIR, "provider.json");
+const ZEN_BASE_URL = process.env.OCGO_ZEN_BASE_URL || "https://opencode.ai/zen/v1";
+const ZEN_MODELS_URL = `${ZEN_BASE_URL}/models`;
+const ZEN_DEFAULT_MODEL = "deepseek-v4-flash-free";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const INVOKED_NAME = basename(process.argv[1] || "navo").replace(/\.mjs$/u, "");
 const CLI_NAME = INVOKED_NAME === "navo" ? INVOKED_NAME : "navo";
@@ -63,26 +67,47 @@ const reasoningContentByToolCallId = new Map();
 const OPENCODE_MODEL_METADATA = new Map([
   ["deepseek-v4-flash", { name: "DeepSeek V4 Flash", note: "Default fast execution model", endpoint: "chat" }],
   ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", note: "Deep coding/reasoning option", endpoint: "chat" }],
+  ["glm-5.2", { name: "GLM-5.2", note: "Latest GLM option", endpoint: "chat" }],
   ["glm-5.1", { name: "GLM-5.1", note: "Strong planning/chat pick", endpoint: "chat" }],
   ["glm-5", { name: "GLM-5", note: "Previous GLM fallback", endpoint: "chat" }],
+  ["kimi-k3", { name: "Kimi K3", note: "Latest Kimi model", endpoint: "chat" }],
   ["kimi-k2.7-code", { name: "Kimi K2.7 Code", note: "Current Kimi coding model", endpoint: "chat" }],
   ["kimi-k2.6", { name: "Kimi K2.6", note: "Strong agent/execution option", endpoint: "chat" }],
+  ["kimi-k2.5", { name: "Kimi K2.5", note: "Kimi fallback option", endpoint: "chat" }],
   ["mimo-v2.5-pro", { name: "MiMo V2.5 Pro", note: "MiMo stronger option", endpoint: "chat" }],
   ["mimo-v2.5", { name: "MiMo V2.5", note: "MiMo fast option", endpoint: "chat" }],
+  ["mimo-v2-pro", { name: "MiMo V2 Pro", note: "MiMo V2 stronger option", endpoint: "chat" }],
+  ["mimo-v2-omni", { name: "MiMo V2 Omni", note: "MiMo V2 multimodal option", endpoint: "chat" }],
+  ["hy3", { name: "HY3", note: "HY3 model", endpoint: "chat" }],
+  ["hy3-preview", { name: "HY3 Preview", note: "HY3 preview option", endpoint: "chat" }],
+  ["grok-4.5", { name: "Grok 4.5", note: "xAI Grok model", endpoint: "chat" }],
   ["minimax-m3", { name: "MiniMax M3", note: "MiniMax flagship option", endpoint: "messages" }],
   ["minimax-m2.7", { name: "MiniMax M2.7", note: "MiniMax fast option", endpoint: "messages" }],
   ["minimax-m2.5", { name: "MiniMax M2.5", note: "MiniMax fallback option", endpoint: "messages" }],
   ["qwen3.7-max", { name: "Qwen3.7 Max", note: "Top Qwen reasoning option", endpoint: "messages" }],
   ["qwen3.7-plus", { name: "Qwen3.7 Plus", note: "High-value Qwen option", endpoint: "messages" }],
-  ["qwen3.6-plus", { name: "Qwen3.6 Plus", note: "Qwen long-context option", endpoint: "messages" }]
+  ["qwen3.6-plus", { name: "Qwen3.6 Plus", note: "Qwen long-context option", endpoint: "messages" }],
+  ["qwen3.5-plus", { name: "Qwen3.5 Plus", note: "Qwen fallback option", endpoint: "messages" }]
+]);
+
+const ZEN_MODEL_METADATA = new Map([
+  ["deepseek-v4-flash-free", { name: "DeepSeek V4 Flash Free", note: "Free fast model", endpoint: "chat" }],
+  ["big-pickle", { name: "Big Pickle", note: "Free general model", endpoint: "chat" }],
+  ["mimo-v2.5-free", { name: "MiMo V2.5 Free", note: "Free MiMo option", endpoint: "chat" }],
+  ["laguna-s-2.1-free", { name: "Laguna S 2.1 Free", note: "Free Laguna model", endpoint: "chat" }],
+  ["ling-3.0-flash-free", { name: "Ling 3.0 Flash Free", note: "Free fast Ling model", endpoint: "chat" }],
+  ["north-mini-code-free", { name: "North Mini Code Free", note: "Free coding model", endpoint: "chat" }],
+  ["nemotron-3-ultra-free", { name: "Nemotron 3 Ultra Free", note: "Free Nemotron model", endpoint: "chat" }]
 ]);
 
 const OPENCODE_MODEL_ALIASES = new Map([
   ["kimi-k2.7", "kimi-k2.7-code"]
 ]);
 
+const ALL_MODEL_METADATA = new Map([...OPENCODE_MODEL_METADATA, ...ZEN_MODEL_METADATA]);
+
 const CODEX_CHAT_MODELS = new Map([
-  ...[...OPENCODE_MODEL_METADATA.entries()].map(([id, metadata]) => [id, metadata.note])
+  ...[...ALL_MODEL_METADATA.entries()].map(([id, metadata]) => [id, metadata.note])
 ]);
 
 const ANTHROPIC_ONLY_DOC_MODELS = new Set([
@@ -167,6 +192,9 @@ async function main() {
         break;
       case "models":
         await listModels(options);
+        break;
+      case "provider":
+        await switchProvider(options);
         break;
       case "model":
       case "select":
@@ -273,6 +301,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
+  const provider = readActiveProvider();
   console.log(`${PROJECT_NAME} - Safe model navigation for Codex and OpenCode
 
 Usage:
@@ -282,6 +311,7 @@ Usage:
   ${CLI_NAME} app [--model ${DEFAULT_MODEL}]
   ${CLI_NAME} ui
   ${CLI_NAME} ui-stop
+  ${CLI_NAME} provider [zen|go]
   ${CLI_NAME} model [opencode-model]
   ${CLI_NAME} codex-model [codex-model]
   ${CLI_NAME} route --chat glm-5.1 --agent ${DEFAULT_MODEL}
@@ -310,14 +340,16 @@ Advanced:
   ${CLI_NAME} backups
   ${CLI_NAME} models [--all]
 
+Active provider: ${provider} (${provider === "zen" ? "Zen Free - 7 models" : "Go Paid - 23 models"})
+
 How it works:
   - Codex currently uses the Responses API for custom providers.
   - OpenCode Go exposes OpenAI-compatible Chat Completions, not Responses.
   - This CLI configures Codex to use a local Responses-to-Chat adapter.
   - The OpenCode connection listens on 127.0.0.1 only and requires your OpenCode Go bearer token from Codex's auth command.
 
-Codex-compatible OpenCode Go models in this helper:
-  ${[...CODEX_CHAT_MODELS.keys()].join(", ")}
+Codex-compatible models (active provider: ${provider}):
+  ${[...(provider === "zen" ? ZEN_MODEL_METADATA : OPENCODE_MODEL_METADATA).keys()].join(", ")}
 `);
 }
 
@@ -430,7 +462,8 @@ async function status(options) {
   console.log(`Safety: ${state.safety.label}`);
   console.log(`Codex config: ${state.codex.configPath}`);
   console.log(`Active model: ${state.codex.model}`);
-  console.log(`Active provider: ${state.codex.provider}`);
+  console.log(`Active provider: ${state.activeProvider} (${state.activeProvider === "zen" ? "Zen Free" : "Go Paid"})`);
+  console.log(`Codex provider: ${state.codex.provider}`);
   console.log(`Model catalog: ${state.codex.catalog}`);
   console.log(`OpenCode Go model catalog: ${state.codex.modelCatalogActive ? "present" : "not active"}`);
   console.log(`OpenCode Go provider block: ${state.codex.hasProvider ? "present" : "missing"}`);
@@ -470,6 +503,7 @@ async function buildState(options = {}) {
     projectName: PROJECT_NAME,
     providerId: PROVIDER_ID,
     providerName: PROVIDER_NAME,
+    activeProvider: readActiveProvider(),
     mode: provider === PROVIDER_ID ? "opencode" : "codex",
     codex: {
       configPath,
@@ -552,7 +586,9 @@ function readCodexSettings(text) {
 }
 
 function modelOptions(activeModel, routing) {
-  return [...CODEX_CHAT_MODELS.entries()].map(([id, note]) => ({
+  const provider = readActiveProvider();
+  const modelMetadata = provider === "zen" ? ZEN_MODEL_METADATA : OPENCODE_MODEL_METADATA;
+  return [...modelMetadata.entries()].map(([id, note]) => ({
     id,
     name: opencodeModelMetadata(id)?.name || id,
     note,
@@ -773,9 +809,50 @@ async function listModels(options = {}) {
   }
 }
 
+async function switchProvider(options) {
+  const provider = normalizeModel(String(options._?.[0] || "").trim()).toLowerCase();
+
+  if (!provider) {
+    const current = readActiveProvider();
+    const models = current === "zen" ? [...ZEN_MODEL_METADATA.keys()] : [...OPENCODE_MODEL_METADATA.keys()];
+    console.log(`Current provider: ${current}`);
+    console.log(`Available models (${current}): ${models.join(", ")}`);
+    console.log(`\nUsage: ${CLI_NAME} provider zen|go`);
+    return;
+  }
+
+  if (provider !== "zen" && provider !== "go") {
+    console.error(`Invalid provider: "${provider}". Must be "zen" or "go".`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const current = readActiveProvider();
+  if (current === provider) {
+    console.log(`Already on provider "${provider}".`);
+    return;
+  }
+
+  const defaultModel = provider === "zen" ? ZEN_DEFAULT_MODEL : DEFAULT_MODEL;
+  writeActiveProvider(provider);
+  configure({ model: defaultModel, quiet: true });
+
+  const providerName = provider === "zen" ? "Zen (Free)" : "OpenCode Go (Paid)";
+  const modelCount = provider === "zen" ? ZEN_MODEL_METADATA.size : OPENCODE_MODEL_METADATA.size;
+  console.log(`Switched to ${providerName} provider.`);
+  console.log(`Model set to "${defaultModel}" (${modelCount} models available).`);
+}
+
 async function selectModel(options) {
   const requested = normalizeModel(String(options.model || options._?.[0] || "").trim());
   if (requested) {
+    const detectedProvider = modelProvider(requested);
+    const currentProvider = readActiveProvider();
+    if (detectedProvider && detectedProvider !== currentProvider) {
+      writeActiveProvider(detectedProvider);
+      const providerName = detectedProvider === "zen" ? "Zen (Free)" : "OpenCode Go (Paid)";
+      console.log(`Auto-switched to ${providerName} provider for model "${requested}".`);
+    }
     switchModel(requested, options);
     return;
   }
@@ -2330,6 +2407,27 @@ function dashboardHtmlV2(sessionToken) {
       padding: 0 13px;
     }
 
+    .provider-badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 8px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      vertical-align: middle;
+    }
+
+    .provider-badge.zen {
+      background: #e6fff0;
+      color: #0a7e3f;
+    }
+
+    .provider-badge.go {
+      background: #fff3e6;
+      color: #9a5a00;
+    }
+
     .welcome-pill {
       justify-self: center;
     }
@@ -2751,6 +2849,7 @@ function dashboardHtmlV2(sessionToken) {
             <div>
               <h2>Status <span id="status-mode-pill" class="mini-pill">OpenCode mode</span></h2>
               <strong id="status-title" class="status-title">Active</strong>
+              <span id="provider-badge" class="provider-badge"></span>
             </div>
           </div>
           <p id="status-copy" class="small">Navo is routing Codex requests to OpenCode.</p>
@@ -3174,6 +3273,12 @@ navo verify --fresh</code>
 	        : (state.key.available ? "Your OpenCode key is saved. Start OpenCode mode when you are ready." : "Add your OpenCode API key on the setup page."));
 	      setText("status-mode-pill", state.mode === "opencode" ? "OpenCode" : "Codex");
 	      setText("status-provider-value", modeLabel);
+	      const badge = $("provider-badge");
+	      if (badge) {
+	        const ap = state.activeProvider || "go";
+	        badge.textContent = ap === "zen" ? "Zen Free" : "Go Paid";
+	        badge.className = "provider-badge " + ap;
+	      }
 	      setText("endpoint-value", state.mode === "opencode" ? state.connection.url : "Codex direct");
 	      setText("last-check-value", lastCheckText);
 	      setText("upstream-value", state.mode === "opencode" ? "opencode.ai" : "Codex provider");
@@ -3611,13 +3716,17 @@ async function handleProxyRequest(req, res) {
 }
 
 async function forwardModels(res, token, context) {
-  const upstream = await fetchWithTimeout(MODELS_URL, {
-    headers: { authorization: `Bearer ${token}` }
-  });
+  const provider = readActiveProvider();
+  const modelsUrl = getActiveModelsUrl();
+  const headers = provider === "zen"
+    ? {}
+    : { authorization: `Bearer ${token}` };
+  const upstream = await fetchWithTimeout(modelsUrl, { headers });
   logRequest(context, {
     status: upstream.status,
     upstream_host: upstreamHost(),
-    upstream_path: "/models"
+    upstream_path: "/models",
+    provider
   });
   await pipeFetchResponse(res, upstream);
 }
@@ -3629,14 +3738,27 @@ async function forwardChatCompletions(req, res, token, context) {
   const routing = applyModelRouting(routedBody);
   const toolOrder = normalizeToolMessageOrder(routedBody);
   const compatibility = applyProviderCompatibility(routedBody);
+  const provider = readActiveProvider();
   const endpoint = opencodeModelEndpoint(routedBody.model);
   const upstreamPath = opencodeEndpointPath(routedBody.model);
   const upstreamBody = endpoint === "messages"
     ? chatCompletionsToAnthropicMessages({ ...routedBody, stream: false })
     : routedBody;
-  const upstream = await fetchWithTimeout(`${OPENCODE_BASE_URL}${upstreamPath}`, {
+
+  const reqModel = normalizeModel(routedBody.model || "");
+  if (provider === "zen" && reqModel && isGoModel(reqModel)) {
+    sendJson(res, 400, { error: { message: `Model "${reqModel}" is not available on Zen. Use "navo provider go" to switch.`, type: "invalid_request_error" } });
+    return;
+  }
+  if (provider === "go" && reqModel && isZenModel(reqModel)) {
+    sendJson(res, 400, { error: { message: `Model "${reqModel}" is not available on Go. Use "navo provider zen" to switch.`, type: "invalid_request_error" } });
+    return;
+  }
+
+  const baseUrl = getActiveBaseUrl();
+  const upstream = await fetchWithTimeout(`${baseUrl}${upstreamPath}`, {
     method: "POST",
-    headers: openCodeRequestHeaders(token, endpoint, req.headers["content-type"] || "application/json"),
+    headers: openCodeRequestHeaders(token, endpoint, req.headers["content-type"] || "application/json", provider),
     signal: requestAbortSignal(req, res),
     body: JSON.stringify(upstreamBody)
   });
@@ -3684,14 +3806,27 @@ async function handleResponsesRequest(req, res, token, responsesBody, context) {
   const routing = applyModelRouting(chatBody);
   const toolOrder = normalizeToolMessageOrder(chatBody);
   const compatibility = applyProviderCompatibility(chatBody);
+  const provider = readActiveProvider();
   const endpoint = opencodeModelEndpoint(chatBody.model);
   const upstreamPath = opencodeEndpointPath(chatBody.model);
   const upstreamBody = endpoint === "messages"
     ? chatCompletionsToAnthropicMessages({ ...chatBody, stream: false })
     : { ...chatBody, stream: false };
-  const upstream = await fetchWithTimeout(`${OPENCODE_BASE_URL}${upstreamPath}`, {
+
+  const reqModel = normalizeModel(chatBody.model || "");
+  if (provider === "zen" && reqModel && isGoModel(reqModel)) {
+    sendJson(res, 400, { error: { message: `Model "${reqModel}" is not available on Zen. Use "navo provider go" to switch.`, type: "invalid_request_error" } });
+    return;
+  }
+  if (provider === "go" && reqModel && isZenModel(reqModel)) {
+    sendJson(res, 400, { error: { message: `Model "${reqModel}" is not available on Go. Use "navo provider zen" to switch.`, type: "invalid_request_error" } });
+    return;
+  }
+
+  const baseUrl = getActiveBaseUrl();
+  const upstream = await fetchWithTimeout(`${baseUrl}${upstreamPath}`, {
     method: "POST",
-    headers: openCodeRequestHeaders(token, endpoint),
+    headers: openCodeRequestHeaders(token, endpoint, undefined, provider),
     signal: requestAbortSignal(req, res),
     body: JSON.stringify(upstreamBody)
   });
@@ -3909,7 +4044,10 @@ function responsesToolChoiceToChat(choice) {
   return choice;
 }
 
-function openCodeRequestHeaders(token, endpoint, contentType = "application/json") {
+function openCodeRequestHeaders(token, endpoint, contentType = "application/json", provider = "go") {
+  if (provider === "zen") {
+    return { "content-type": contentType };
+  }
   const headers = {
     authorization: `Bearer ${token}`,
     "content-type": contentType
@@ -4537,10 +4675,12 @@ function writeModelCatalog(catalogPath, primaryModel) {
   writeFileSync(catalogPath, data, "utf8");
 }
 
-function catalogModels(primaryModel) {
+function catalogModels(primaryModel, provider = null) {
+  const activeProvider = provider || readActiveProvider();
+  const modelMetadata = activeProvider === "zen" ? ZEN_MODEL_METADATA : OPENCODE_MODEL_METADATA;
   const seen = new Set();
   const output = [];
-  for (const model of [primaryModel, ...CODEX_CHAT_MODELS.keys()]) {
+  for (const model of [primaryModel, ...modelMetadata.keys()]) {
     const normalized = normalizeModel(String(model || "").trim());
     const key = normalized.replace(/:latest$/u, "");
     if (!normalized || seen.has(key)) {
@@ -5355,6 +5495,48 @@ function hasStoredToken() {
   } catch {
     return false;
   }
+}
+
+function readActiveProvider() {
+  try {
+    if (existsSync(PROVIDER_PATH)) {
+      const data = JSON.parse(readFileSync(PROVIDER_PATH, "utf8"));
+      if (data?.provider === "zen" || data?.provider === "go") {
+        return data.provider;
+      }
+    }
+  } catch {}
+  return "go";
+}
+
+function writeActiveProvider(provider) {
+  if (provider !== "zen" && provider !== "go") {
+    throw new Error(`Invalid provider: ${provider}. Must be "zen" or "go".`);
+  }
+  mkdirSync(APP_DIR, { recursive: true, mode: PRIVATE_DIR_MODE });
+  writeFileSync(PROVIDER_PATH, JSON.stringify({ provider }, null, 2), { mode: PRIVATE_FILE_MODE });
+}
+
+function getActiveBaseUrl() {
+  return readActiveProvider() === "zen" ? ZEN_BASE_URL : OPENCODE_BASE_URL;
+}
+
+function getActiveModelsUrl() {
+  return readActiveProvider() === "zen" ? ZEN_MODELS_URL : MODELS_URL;
+}
+
+function isZenModel(modelId) {
+  return ZEN_MODEL_METADATA.has(modelId);
+}
+
+function isGoModel(modelId) {
+  return OPENCODE_MODEL_METADATA.has(modelId);
+}
+
+function modelProvider(modelId) {
+  if (isZenModel(modelId)) return "zen";
+  if (isGoModel(modelId)) return "go";
+  return null;
 }
 
 function tokenStoreName() {

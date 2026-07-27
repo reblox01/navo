@@ -173,20 +173,28 @@ test("dashboard shows honest model controls without duplicate mode action cards"
     assert.deepEqual(modelIds, [
       "deepseek-v4-flash",
       "deepseek-v4-pro",
+      "glm-5.2",
       "glm-5.1",
       "glm-5",
+      "kimi-k3",
       "kimi-k2.7-code",
       "kimi-k2.6",
+      "kimi-k2.5",
       "mimo-v2.5-pro",
       "mimo-v2.5",
+      "mimo-v2-pro",
+      "mimo-v2-omni",
+      "hy3",
+      "hy3-preview",
+      "grok-4.5",
       "minimax-m3",
       "minimax-m2.7",
       "minimax-m2.5",
       "qwen3.7-max",
       "qwen3.7-plus",
-      "qwen3.6-plus"
+      "qwen3.6-plus",
+      "qwen3.5-plus"
     ]);
-    assert.equal(modelIds.includes("kimi-k2.5"), false);
     assert.equal(flash.contextWindow, null);
     assert.equal(glm.contextWindow, null);
   });
@@ -223,7 +231,7 @@ test("models command shows docs-backed Go models and marks live-only models", as
         data: [
           { id: "deepseek-v4-flash" },
           { id: "minimax-m3" },
-          { id: "hy3-preview" }
+          { id: "codex-auto-review" }
         ]
       }));
       return;
@@ -247,13 +255,13 @@ test("models command shows docs-backed Go models and marks live-only models", as
     assert.match(visible.stdout, /glm-5\.1/u);
     assert.match(visible.stdout, /minimax-m3/u);
     assert.match(visible.stdout, /qwen3\.7-plus/u);
-    assert.doesNotMatch(visible.stdout, /hy3-preview/u);
+    assert.doesNotMatch(visible.stdout, /codex-auto-review/u);
     assert.match(visible.stdout, /OpenCode Go documentation/u);
 
     const all = await runNavo(["models", "--all"], env);
     assert.equal(all.code, 0, all.stderr);
     assert.match(all.stdout, /minimax-m3/u);
-    assert.match(all.stdout, /hy3-preview/u);
+    assert.match(all.stdout, /codex-auto-review/u);
     assert.match(all.stdout, /not in Navo's docs-backed selector/u);
   } finally {
     await new Promise((resolve) => upstream.close(resolve));
@@ -559,4 +567,64 @@ test("configure normalizes the documented Kimi K2.7 alias to the Codex config id
 
   const config = readFileSync(join(homes.codexHome, "config.toml"), "utf8");
   assert.match(config, /model = "kimi-k2\.7-code"/u);
+});
+
+test("navo provider zen switches to Zen free provider", async () => {
+  const homes = tempHomes();
+  const { code, stdout } = await runNavo(["provider", "zen"], {
+    NAVO_HOME: homes.navoHome,
+    CODEX_HOME: homes.codexHome
+  });
+  assert.equal(code, 0);
+  assert.match(stdout, /Switched to Zen/);
+  assert.match(stdout, /deepseek-v4-flash-free/);
+  assert.ok(existsSync(join(homes.navoHome, "provider.json")));
+  const providerData = JSON.parse(readFileSync(join(homes.navoHome, "provider.json"), "utf8"));
+  assert.equal(providerData.provider, "zen");
+});
+
+test("navo provider go switches to Go paid provider", async () => {
+  const homes = tempHomes();
+  await runNavo(["provider", "zen"], { NAVO_HOME: homes.navoHome, CODEX_HOME: homes.codexHome });
+  const { code, stdout } = await runNavo(["provider", "go"], {
+    NAVO_HOME: homes.navoHome,
+    CODEX_HOME: homes.codexHome
+  });
+  assert.equal(code, 0);
+  assert.match(stdout, /Switched to OpenCode Go/);
+  assert.match(stdout, /deepseek-v4-flash/);
+  const providerData = JSON.parse(readFileSync(join(homes.navoHome, "provider.json"), "utf8"));
+  assert.equal(providerData.provider, "go");
+});
+
+test("navo provider with no args shows current provider", async () => {
+  const homes = tempHomes();
+  await runNavo(["provider", "zen"], { NAVO_HOME: homes.navoHome, CODEX_HOME: homes.codexHome });
+  const { code, stdout } = await runNavo(["provider"], {
+    NAVO_HOME: homes.navoHome,
+    CODEX_HOME: homes.codexHome
+  });
+  assert.equal(code, 0);
+  assert.match(stdout, /Current provider: zen/);
+});
+
+test("navo provider rejects invalid provider name", async () => {
+  const homes = tempHomes();
+  const { code, stderr } = await runNavo(["provider", "invalid"], {
+    NAVO_HOME: homes.navoHome,
+    CODEX_HOME: homes.codexHome
+  });
+  assert.notEqual(code, 0);
+  assert.match(stderr, /Invalid provider/);
+});
+
+test("navo status shows active provider", async () => {
+  const homes = tempHomes();
+  await runNavo(["provider", "zen"], { NAVO_HOME: homes.navoHome, CODEX_HOME: homes.codexHome });
+  const { code, stdout } = await runNavo(["status"], {
+    NAVO_HOME: homes.navoHome,
+    CODEX_HOME: homes.codexHome
+  });
+  assert.equal(code, 0);
+  assert.match(stdout, /Active provider: zen/);
 });
