@@ -1,16 +1,16 @@
 {
   "name": "@bghitcode/navo",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Switch Codex between native and OpenCode models safely with a local connection and dashboard.",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rebel0789/navo.git"
+    "url": "git+https://github.com/reblox01/navo.git"
   },
   "bugs": {
-    "url": "https://github.com/rebel0789/navo/issues"
+    "url": "https://github.com/reblox01/navo/issues"
   },
-  "homepage": "https://github.com/rebel0789/navo#readme",
+  "homepage": "https://github.com/reblox01/navo#readme",
   "bin": {
     "navo": "bin/navo.mjs"
   },
