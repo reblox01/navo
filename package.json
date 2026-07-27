@@ -1,5 +1,5 @@
 {
-  "name": "@rebel0x/navo",
+  "name": "@bghitcode/navo",
   "version": "0.1.4",
   "description": "Switch Codex between native and OpenCode models safely with a local connection and dashboard.",
   "type": "module",
