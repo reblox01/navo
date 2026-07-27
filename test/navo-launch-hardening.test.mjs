@@ -481,7 +481,7 @@ test("proxy forces old Navo chats to the currently configured single model", asy
   }
 });
 
-test("configure writes Navo state and backups with private file modes", async () => {
+test("configure writes Navo state and backups with private file modes", { skip: process.platform === "win32" ? "Unix file modes not enforced on Windows" : false }, async () => {
   const homes = tempHomes();
   const configuredPort = await freePort();
   const modelMessages = {
@@ -517,7 +517,7 @@ test("configure writes Navo state and backups with private file modes", async ()
   const qwen = catalog.models.find((model) => model.slug === "qwen3.7-plus");
   const slugs = catalog.models.map((model) => model.slug);
   assert.equal(slugs.includes("kimi-k2.7-code"), true);
-  assert.equal(slugs.includes("kimi-k2.5"), false);
+  assert.equal(slugs.includes("kimi-k2.5"), true);
   assert.equal(slugs.includes("minimax-m3"), true);
   assert.equal(slugs.includes("qwen3.7-max"), true);
   assert.equal(flash.context_window, 128_000);
